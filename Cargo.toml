@@ -1,0 +1,20 @@
+[package]
+name = "rufio"
+version = "0.0.0-dev"
+edition = "2021"
+description = "Claude Code hook handler"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
