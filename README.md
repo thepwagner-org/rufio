@@ -1,18 +1,6 @@
----
-created: 2025-11-29
-description: Claude hooks utility
----
 # rufio
 
 Claude Code hook handler that enforces code quality checks.
-
-## Build
-
-```bash
-cargo build
-cargo test
-cargo clippy
-```
 
 ## Usage
 
