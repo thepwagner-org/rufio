@@ -4,10 +4,24 @@ Claude Code hook handler that enforces code quality checks.
 
 ## Usage
 
-Pipe hook JSON to stdin:
-```bash
-echo '{"hook_event_name":"Stop","cwd":"/path","session_id":"x","transcript_path":"/t"}' | cargo run
+Add to `~/.claude/settings.json`:
+```json
+{
+  "hooks": {
+    "Notification": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}],
+    "PermissionRequest": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}],
+    "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}],
+    "PreToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}],
+    "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}],
+    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}],
+    "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}],
+    "SubagentStop": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}],
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "/path/to/rufio"}]}]
+  }
+}
 ```
+
+Only `Stop` is required for the quality checks. The other events enable the status spinner.
 
 ## Checks
 
