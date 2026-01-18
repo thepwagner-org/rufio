@@ -1,0 +1,10 @@
+presets:
+  - cargo
+
+checks:
+  - name: meow-fmt
+    when:
+      paths_changed: "journal/**/*.md"
+    then:
+      ensure_commands:
+        - meow fmt

@@ -1,4 +1,3 @@
-pub mod cargo;
-pub mod common;
-pub mod meow;
-pub mod version_bump;
+pub mod runner;
+
+pub use runner::run_checks;

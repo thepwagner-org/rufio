@@ -4,10 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod checks;
+mod config;
 mod input;
+mod presets;
 mod transcript;
 mod zellij;
 
+use config::find_nearest_config;
 use input::HookInput;
 
 /// Log a message to /tmp/rufio-{session_id}.txt if running in Zellij.
@@ -136,33 +139,36 @@ fn run_stop_checks(input: &HookInput) -> Result<()> {
 
     let mut reasons: Vec<String> = Vec::new();
 
-    // Run checks FIRST before updating Zellij state
-    if let Some(reason) = checks::version_bump::check(&input.cwd, &changed_files) {
+    // Find repo root
+    let cwd_path = Path::new(&input.cwd);
+    let repo_root = get_git_root(&input.cwd).unwrap_or_else(|| cwd_path.to_path_buf());
+
+    // Try to find a config file
+    if let Some(loaded) = find_nearest_config(cwd_path, &repo_root) {
         log_if_zellij(
             &input.session_id,
-            &format!("check version_bump: BLOCK - {}", reason),
+            &format!("Stop: found config at {}", loaded.config_dir.display()),
         );
-        reasons.push(reason);
+
+        // Run all checks from config
+        let results = checks::run_checks(&loaded, &changed_files, &events);
+
+        for result in results {
+            if let Some(reason) = result.reason {
+                log_if_zellij(
+                    &input.session_id,
+                    &format!("check {}: BLOCK - {}", result.check_name, reason),
+                );
+                reasons.push(reason);
+            } else {
+                log_if_zellij(
+                    &input.session_id,
+                    &format!("check {}: pass", result.check_name),
+                );
+            }
+        }
     } else {
-        log_if_zellij(&input.session_id, "check version_bump: pass");
-    }
-    if let Some(reason) = checks::cargo::check(&changed_files, &events) {
-        log_if_zellij(
-            &input.session_id,
-            &format!("check cargo: BLOCK - {}", reason),
-        );
-        reasons.push(reason);
-    } else {
-        log_if_zellij(&input.session_id, "check cargo: pass");
-    }
-    if let Some(reason) = checks::meow::check(&changed_files, &events) {
-        log_if_zellij(
-            &input.session_id,
-            &format!("check meow: BLOCK - {}", reason),
-        );
-        reasons.push(reason);
-    } else {
-        log_if_zellij(&input.session_id, "check meow: pass");
+        log_if_zellij(&input.session_id, "Stop: no config found, skipping checks");
     }
 
     // Update Zellij AFTER checks - only show Stopped if not blocking
