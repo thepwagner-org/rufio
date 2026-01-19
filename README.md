@@ -20,18 +20,54 @@ Add to `~/.claude/settings.json`:
   }
 }
 ```
-
 Only `Stop` is required for the quality checks. The other events enable the status spinner.
 
-## Checks
+## Configuration
 
-### Version Bump (Nix projects)
+Create a `rufio-hooks.yaml` in your project root:
+```yaml
+presets:
+  - cargo
 
-For projects with `package.nix`: blocks if functional code changed but `Cargo.toml` version wasn't bumped. Ignores meta files (`.md`, `.lock`, `.nix`, `.claude/`, `.envrc`, `.gitignore`).
+checks:
+  - name: meow-fmt
+    when:
+      paths_changed: "journal/**/*.md"
+    then:
+      ensure_commands:
+        - meow fmt
+```
 
-### Cargo Commands (Rust projects)
+### Presets
 
-For projects with `Cargo.toml`: requires `cargo test`, `cargo fmt`, and `cargo clippy` to run after any `.rs` file edits. Parses the transcript to verify commands ran in correct order.
+Built-in presets provide common check configurations:
+| Preset | Triggers | Commands/Checks |
+|--------|----------|-----------------|
+| `cargo` | `**/*.rs` | `cargo test`, `cargo fmt`, `cargo clippy`; version bump if `package.nix` exists |
+| `pnpm` | `**/*.ts` | `pnpm lint`, `pnpm typecheck`, `pnpm test`; version bump if `package.nix` exists |
+| `meow` | `**/*.md` | `meow fmt` |
+| `ledger` | `**/*.ledger` | `hledger check`, `folio validate` |
+| `terraform` | `**/*.tf` | `tofu fmt`, `tflint`, `trivy config .` |
+Custom presets can be added to `$XDG_CONFIG_HOME/rufio/presets/{name}.yaml`.
+
+### Custom Checks
+
+Define checks with `when` conditions and `then` actions:
+```yaml
+checks:
+  - name: my-check
+    when:
+      paths_changed: "src/**/*.rs"  # glob pattern (required)
+      path_exists: "package.nix"    # only run if this path exists (optional)
+    then:
+      ensure_commands:              # commands that must have run
+        - cargo test
+      # OR
+      ensure_changed:               # files that must have changed
+        - version.toml
+```
+- `ensure_commands`: verifies these commands ran (in any order) after the matching files changed
+- `ensure_changed`: verifies these files were also modified in the session
 
 ## Output
 
