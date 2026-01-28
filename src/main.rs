@@ -6,7 +6,6 @@ use std::process::Command;
 mod checks;
 mod config;
 mod input;
-mod presets;
 mod transcript;
 mod zellij;
 

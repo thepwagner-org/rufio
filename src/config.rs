@@ -3,8 +3,6 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::presets::PRESETS;
-
 const CONFIG_FILENAME: &str = "rufio-hooks.yaml";
 
 /// Conditions that trigger a check
@@ -65,37 +63,30 @@ pub struct LoadedConfig {
     pub config_dir: PathBuf,
 }
 
-/// Resolves preset names to their check definitions
+/// Resolves preset names to their check definitions from XDG config
 fn resolve_presets(preset_names: &[String], config_path: &Path) -> Result<Vec<Check>> {
     let mut checks = Vec::new();
 
     for name in preset_names {
-        // First try XDG config location
-        if let Some(xdg_checks) = load_preset_from_xdg(name)? {
-            checks.extend(xdg_checks);
-            continue;
+        match load_preset_from_xdg(name)? {
+            Some(xdg_checks) => checks.extend(xdg_checks),
+            None => {
+                let expected_path = get_preset_path(name);
+                bail!(
+                    "Invalid config at {}: preset '{}' not found at {}",
+                    config_path.display(),
+                    name,
+                    expected_path.display()
+                );
+            }
         }
-
-        // Fall back to built-in presets
-        if let Some(builtin_checks) = PRESETS.get(name.as_str()) {
-            checks.extend(builtin_checks.iter().cloned());
-            continue;
-        }
-
-        let available: Vec<&str> = PRESETS.keys().copied().collect();
-        bail!(
-            "Invalid config at {}: unknown preset '{}'. Available: {}",
-            config_path.display(),
-            name,
-            available.join(", ")
-        );
     }
 
     Ok(checks)
 }
 
-/// Try to load a preset from $XDG_CONFIG_HOME/rufio/presets/{name}.yaml
-fn load_preset_from_xdg(name: &str) -> Result<Option<Vec<Check>>> {
+/// Get the expected path for a preset in XDG config
+fn get_preset_path(name: &str) -> PathBuf {
     let xdg_config = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -103,10 +94,15 @@ fn load_preset_from_xdg(name: &str) -> Result<Option<Vec<Check>>> {
             PathBuf::from(home).join(".config")
         });
 
-    let preset_path = xdg_config
+    xdg_config
         .join("rufio")
         .join("presets")
-        .join(format!("{}.yaml", name));
+        .join(format!("{}.yaml", name))
+}
+
+/// Try to load a preset from $XDG_CONFIG_HOME/rufio/presets/{name}.yaml
+fn load_preset_from_xdg(name: &str) -> Result<Option<Vec<Check>>> {
+    let preset_path = get_preset_path(name);
 
     if !preset_path.exists() {
         return Ok(None);

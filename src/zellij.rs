@@ -119,7 +119,6 @@ fn find_zellij() -> Option<std::path::PathBuf> {
 
     // Try common nix/homebrew locations
     let candidates = [
-        "/etc/profiles/per-user/pwagner/bin/zellij",
         "/run/current-system/sw/bin/zellij",
         "/usr/local/bin/zellij",
         "/opt/homebrew/bin/zellij",

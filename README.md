@@ -20,39 +20,11 @@ Add to `~/.claude/settings.json`:
   }
 }
 ```
-Only `Stop` is required for the quality checks. The other events enable the status spinner.
+Only `Stop` is required for the quality checks. The other events enable a Zellij tab status indicator.
 
 ## Configuration
 
 Create a `rufio-hooks.yaml` in your project root:
-```yaml
-presets:
-  - cargo
-
-checks:
-  - name: meow-fmt
-    when:
-      paths_changed: "journal/**/*.md"
-    then:
-      ensure_commands:
-        - meow fmt
-```
-
-### Presets
-
-Built-in presets provide common check configurations:
-| Preset | Triggers | Commands/Checks |
-|--------|----------|-----------------|
-| `cargo` | `**/*.rs` | `cargo test`, `cargo fmt`, `cargo clippy`; version bump if `package.nix` exists |
-| `pnpm` | `**/*.ts` | `pnpm lint`, `pnpm typecheck`, `pnpm test`; version bump if `package.nix` exists |
-| `meow` | `**/*.md` | `meow fmt` |
-| `ledger` | `**/*.ledger` | `hledger check`, `folio validate` |
-| `terraform` | `**/*.tf` | `tofu fmt`, `tflint`, `trivy config .` |
-Custom presets can be added to `$XDG_CONFIG_HOME/rufio/presets/{name}.yaml`.
-
-### Custom Checks
-
-Define checks with `when` conditions and `then` actions:
 ```yaml
 checks:
   - name: my-check
@@ -68,6 +40,35 @@ checks:
 ```
 - `ensure_commands`: verifies these commands ran (in any order) after the matching files changed
 - `ensure_changed`: verifies these files were also modified in the session
+
+### Presets
+
+Presets are reusable check collections stored at `$XDG_CONFIG_HOME/rufio/presets/{name}.yaml`:
+```yaml
+# ~/.config/rufio/presets/cargo.yaml
+checks:
+  - name: cargo-checks
+    when:
+      paths_changed: "**/*.rs"
+    then:
+      ensure_commands:
+        - cargo test
+        - cargo fmt
+        - cargo clippy
+```
+Reference presets in your project config:
+```yaml
+presets:
+  - cargo
+
+checks:
+  - name: version-bump
+    when:
+      paths_changed: "**/*.rs"
+    then:
+      ensure_changed:
+        - version.toml
+```
 
 ## Output
 
