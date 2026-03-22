@@ -1,202 +1,108 @@
 use anyhow::Result;
-use std::io::{self, Read, Write};
+use std::fs::OpenOptions;
+use std::io::{self, Read, Write as IoWrite};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tracing::{debug, info};
 
 mod checks;
 mod config;
 mod input;
 mod transcript;
-mod zellij;
 
-use config::find_nearest_config;
+use config::group_files_by_config;
 use input::HookInput;
 
-/// Log a message to /tmp/rufio-{session_id}.txt if running in Zellij.
-/// This is for debugging hook behavior.
-fn log_if_zellij(session_id: &str, message: &str) {
-    if std::env::var("ZELLIJ_PANE_ID").is_ok() {
-        let path = format!("/tmp/rufio-{}.txt", session_id);
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-        {
-            let timestamp = chrono::Local::now().format("%H:%M:%S%.3f");
-            let _ = writeln!(file, "[{}] {}", timestamp, message);
-        }
+/// Write to a file log when RUFIO_LOG is set (e.g. RUFIO_LOG=/tmp/rufio.log).
+fn log(msg: &str) {
+    let path = match std::env::var("RUFIO_LOG") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return,
+    };
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "{}", msg);
     }
 }
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(io::stderr)
+        .with_target(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("rufio=debug".parse()?),
+        )
+        .init();
+
+    log("rufio invoked");
+
     let input = read_input()?;
 
-    log_if_zellij(
-        &input.session_id,
-        &format!(
-            "event={} tool={:?}",
-            input.hook_event_name,
-            input.tool_name.as_deref().unwrap_or("None")
-        ),
-    );
+    log(&format!("hook_event={} cwd={} transcript={}", input.hook_event_name, input.cwd, input.transcript_path));
 
-    match input.hook_event_name.as_str() {
-        "Stop" => {
-            run_stop_checks(&input)?;
-        }
-        "PostToolUse" => {
-            // Clear asking marker if it exists
-            let marker = asking_marker_path(&input.session_id);
-            if marker.exists() {
-                log_if_zellij(
-                    &input.session_id,
-                    &format!(
-                        "PostToolUse: {} completed, clearing asking marker",
-                        input.tool_name.as_deref().unwrap_or("unknown")
-                    ),
-                );
-                let _ = std::fs::remove_file(&marker);
-            }
-            // Always tick spinner
-            log_if_zellij(
-                &input.session_id,
-                &format!(
-                    "PostToolUse: {} -> ticking spinner",
-                    input.tool_name.as_deref().unwrap_or("unknown")
-                ),
-            );
-            zellij::update_tab_name(zellij::PaneState::Active, &input.cwd, &input.session_id);
-        }
-        "PermissionRequest" => {
-            log_if_zellij(
-                &input.session_id,
-                "PermissionRequest -> setting question state",
-            );
-            zellij::update_tab_name(
-                zellij::PaneState::AskingQuestion,
-                &input.cwd,
-                &input.session_id,
-            );
-            let marker = asking_marker_path(&input.session_id);
-            let _ = std::fs::write(&marker, "");
-        }
-        "PreToolUse" => {
-            // Clear asking marker if it exists (permission was granted)
-            let marker = asking_marker_path(&input.session_id);
-            if marker.exists() {
-                log_if_zellij(&input.session_id, "PreToolUse: clearing asking marker");
-                let _ = std::fs::remove_file(&marker);
-            }
-            // Always tick spinner
-            log_if_zellij(
-                &input.session_id,
-                &format!(
-                    "PreToolUse: {} -> ticking spinner",
-                    input.tool_name.as_deref().unwrap_or("unknown")
-                ),
-            );
-            zellij::update_tab_name(zellij::PaneState::Active, &input.cwd, &input.session_id);
-        }
-        "UserPromptSubmit" => {
-            // Clear asking marker if present
-            let marker = asking_marker_path(&input.session_id);
-            if marker.exists() {
-                log_if_zellij(
-                    &input.session_id,
-                    "UserPromptSubmit: clearing asking marker",
-                );
-                let _ = std::fs::remove_file(&marker);
-            }
-            log_if_zellij(&input.session_id, "UserPromptSubmit -> active state");
-            zellij::update_tab_name(zellij::PaneState::Active, &input.cwd, &input.session_id);
-        }
-        _ => {
-            log_if_zellij(
-                &input.session_id,
-                &format!("unhandled event: {}", input.hook_event_name),
-            );
-        }
+    info!(hook_event = %input.hook_event_name, cwd = %input.cwd);
+
+    if input.hook_event_name == "Stop" {
+        run_stop_checks(&input)?;
+    } else {
+        log(&format!("ignoring event: {}", input.hook_event_name));
     }
 
     Ok(())
 }
 
 fn run_stop_checks(input: &HookInput) -> Result<()> {
-    // Get changed files ONCE
+    log("running stop checks");
     let changed_files = get_changed_files(&input.cwd);
-    log_if_zellij(
-        &input.session_id,
-        &format!("Stop: {} changed files", changed_files.len()),
-    );
-
-    // Parse transcript ONCE
     let events = transcript::extract_tool_events(&input.transcript_path)?;
-    log_if_zellij(
-        &input.session_id,
-        &format!("Stop: {} transcript events", events.len()),
-    );
+
+    log(&format!("changed_files={:?}", changed_files));
+    log(&format!("transcript_events={}", events.len()));
+    for e in &events {
+        log(&format!("  event: tool={} cmd={:?} file={:?} idx={}", e.tool_name, e.command, e.file_path, e.index));
+    }
+
+    debug!(?changed_files);
 
     let mut reasons: Vec<String> = Vec::new();
 
-    // Find repo root
     let cwd_path = Path::new(&input.cwd);
     let repo_root = get_git_root(&input.cwd).unwrap_or_else(|| cwd_path.to_path_buf());
 
-    // Try to find a config file
-    if let Some(loaded) = find_nearest_config(cwd_path, &repo_root) {
-        log_if_zellij(
-            &input.session_id,
-            &format!("Stop: found config at {}", loaded.config_dir.display()),
-        );
+    // Group files by their nearest config and run each config's checks
+    let groups = group_files_by_config(&changed_files, cwd_path, &repo_root);
 
-        // Run all checks from config
-        let results = checks::run_checks(&loaded, &changed_files, &events);
+    log(&format!("groups={}", groups.len()));
+    for (loaded, files) in &groups {
+        log(&format!("  group config_dir={} files={:?}", loaded.config_dir.display(), files));
+    }
+
+    debug!(groups = groups.len());
+
+    for (loaded, files) in &groups {
+        let results = checks::run_checks(loaded, files, &events, cwd_path);
 
         for result in results {
+            log(&format!("  check={} reason={:?}", result.check_name, result.reason));
             if let Some(reason) = result.reason {
-                log_if_zellij(
-                    &input.session_id,
-                    &format!("check {}: BLOCK - {}", result.check_name, reason),
-                );
                 reasons.push(reason);
-            } else {
-                log_if_zellij(
-                    &input.session_id,
-                    &format!("check {}: pass", result.check_name),
-                );
             }
         }
-    } else {
-        log_if_zellij(&input.session_id, "Stop: no config found, skipping checks");
     }
 
-    // Update Zellij AFTER checks - only show Stopped if not blocking
-    let marker = asking_marker_path(&input.session_id);
-    if marker.exists() {
-        log_if_zellij(&input.session_id, "Stop: asking marker exists, removing it");
-        let _ = std::fs::remove_file(&marker);
-    } else if reasons.is_empty() {
-        log_if_zellij(&input.session_id, "Stop: all checks pass -> stopped state");
-        zellij::update_tab_name(zellij::PaneState::Stopped, &input.cwd, &input.session_id);
-    } else {
-        log_if_zellij(
-            &input.session_id,
-            "Stop: checks failed -> active state (blocking)",
-        );
-        zellij::update_tab_name(zellij::PaneState::Active, &input.cwd, &input.session_id);
-    }
-
-    // Output blocking JSON if any reasons
     if !reasons.is_empty() {
         let combined = reasons.join(" | ");
-        log_if_zellij(
-            &input.session_id,
-            &format!("Stop: outputting block JSON: {}", combined),
-        );
+        log(&format!("BLOCKING: {}", combined));
         #[allow(clippy::print_stdout)]
         {
             println!(r#"{{"decision":"block","reason":"{}"}}"#, combined);
         }
+    } else {
+        log("all checks passed, not blocking");
     }
 
     Ok(())
@@ -213,14 +119,12 @@ fn get_changed_files(cwd: &str) -> Vec<String> {
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Porcelain format: "XY filename" where XY is 2-char status, then space, then filename
     let all_files: Vec<String> = stdout
         .lines()
         .filter_map(|line| line.get(3..))
         .map(String::from)
         .collect();
 
-    // Filter to files within project boundary
     filter_to_project(cwd, all_files)
 }
 
@@ -229,29 +133,40 @@ fn get_changed_files(cwd: &str) -> Vec<String> {
 fn filter_to_project(cwd: &str, files: Vec<String>) -> Vec<String> {
     let git_root = match get_git_root(cwd) {
         Some(root) => root,
-        None => return files, // Not in a git repo, return as-is
+        None => return files,
     };
 
     let project_root = match find_project_root(cwd, &git_root) {
         Some(root) => root,
-        None => return files, // No marker found, use git root (current behavior)
+        None => return files,
     };
 
-    // If project root IS the git root, no filtering needed
+    strip_project_prefix(files, &git_root, &project_root)
+}
+
+/// Strip the project prefix from git-root-relative file paths.
+/// When project_root == git_root, returns files unchanged.
+/// Otherwise filters to files under the project and strips the prefix.
+fn strip_project_prefix(
+    files: Vec<String>,
+    git_root: &Path,
+    project_root: &Path,
+) -> Vec<String> {
     if project_root == git_root {
         return files;
     }
 
-    // Compute relative path from git root to project root
-    let prefix = match project_root.strip_prefix(&git_root) {
+    let prefix = match project_root.strip_prefix(git_root) {
         Ok(p) => p.to_string_lossy().to_string(),
-        Err(_) => return files, // Shouldn't happen, but be safe
+        Err(_) => return files,
     };
 
-    // Filter files that start with the project prefix
+    let prefix_with_slash = format!("{}/", prefix);
+
     files
         .into_iter()
-        .filter(|f| f.starts_with(&prefix))
+        .filter(|f| f.starts_with(&prefix_with_slash))
+        .map(|f| f[prefix_with_slash.len()..].to_string())
         .collect()
 }
 
@@ -261,17 +176,14 @@ fn find_project_root(cwd: &str, git_root: &Path) -> Option<PathBuf> {
     let mut current = PathBuf::from(cwd);
 
     loop {
-        // Check for marker files
         if current.join("shell.nix").exists() || current.join("CLAUDE.md").exists() {
             return Some(current);
         }
 
-        // Stop if we've reached git root
         if current == git_root {
             return None;
         }
 
-        // Move up
         if !current.pop() {
             return None;
         }
@@ -299,11 +211,6 @@ fn read_input() -> Result<HookInput> {
     io::stdin().read_to_string(&mut buffer)?;
     let input: HookInput = serde_json::from_str(&buffer)?;
     Ok(input)
-}
-
-/// Get path to marker file that indicates AskUserQuestion was just used
-fn asking_marker_path(session_id: &str) -> PathBuf {
-    PathBuf::from(format!("/tmp/rufio-asking-{}", session_id))
 }
 
 #[cfg(test)]
@@ -345,7 +252,6 @@ mod tests {
         fs::create_dir_all(&deep_dir).unwrap();
         fs::write(subproject.join("shell.nix"), "").unwrap();
 
-        // Start from deep_dir, should find shell.nix in subproject
         let result = find_project_root(deep_dir.to_str().unwrap(), git_root);
         assert_eq!(result, Some(subproject));
     }
@@ -369,5 +275,33 @@ mod tests {
 
         let result = find_project_root(git_root.to_str().unwrap(), git_root);
         assert_eq!(result, Some(git_root.to_path_buf()));
+    }
+
+    #[test]
+    fn test_strip_project_prefix_in_monorepo() {
+        let git_root = PathBuf::from("/repo");
+        let project_root = PathBuf::from("/repo/projects/foo");
+
+        let files = vec![
+            "projects/foo/src/main.rs".to_string(),
+            "projects/foo/src/lib.rs".to_string(),
+            "projects/bar/other.rs".to_string(),
+        ];
+
+        let result = strip_project_prefix(files, &git_root, &project_root);
+
+        assert_eq!(result, vec!["src/main.rs", "src/lib.rs"]);
+    }
+
+    #[test]
+    fn test_strip_project_prefix_no_strip_when_at_git_root() {
+        let git_root = PathBuf::from("/repo");
+        let project_root = PathBuf::from("/repo");
+
+        let files = vec!["src/main.rs".to_string(), "src/lib.rs".to_string()];
+
+        let result = strip_project_prefix(files, &git_root, &project_root);
+
+        assert_eq!(result, vec!["src/main.rs", "src/lib.rs"]);
     }
 }

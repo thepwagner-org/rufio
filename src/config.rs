@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::warn;
 
 const CONFIG_FILENAME: &str = "rufio-hooks.yaml";
 
@@ -206,9 +207,8 @@ pub fn find_nearest_config(start_dir: &Path, repo_root: &Path) -> Option<LoadedC
                         config_dir: current,
                     });
                 }
-                Err(_) => {
-                    // Invalid config, skip and continue searching
-                    // (Could log this error if needed)
+                Err(e) => {
+                    warn!(path = %config_path.display(), error = %e, "failed to load config");
                 }
             }
         }
@@ -232,7 +232,6 @@ pub fn find_nearest_config(start_dir: &Path, repo_root: &Path) -> Option<LoadedC
 
 /// Groups changed files by their nearest config.
 /// Returns a map of config_dir -> (LoadedConfig, files)
-#[allow(dead_code)]
 pub fn group_files_by_config(
     changed_files: &[String],
     cwd: &Path,
