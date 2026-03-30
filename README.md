@@ -1,3 +1,3 @@
 # rufio
 
-**Retired.** Replaced by [rufio-ts](https://github.com/thepwagner-org/rufio-ts).
+Claude Code hook handler — receives hook events on stdin and runs compliance checks.
