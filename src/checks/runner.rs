@@ -531,14 +531,12 @@ mod tests {
         );
         // Files are project-relative (prefix already stripped)
         let changed_files = vec!["src/main.rs".to_string()];
-        let events = vec![
-            ToolUseEvent {
-                tool_name: "Edit".to_string(),
-                command: None,
-                file_path: Some("/repo/projects/foo/src/main.rs".to_string()),
-                index: 0,
-            },
-        ];
+        let events = vec![ToolUseEvent {
+            tool_name: "Edit".to_string(),
+            command: None,
+            file_path: Some("/repo/projects/foo/src/main.rs".to_string()),
+            index: 0,
+        }];
 
         // Pass project_root as repo_root (as run_stop_checks now does)
         let results = run_checks(&loaded, &changed_files, &events, &project_root);

@@ -55,3 +55,16 @@ fn test_invalid_json_fails() {
 
     assert_ne!(code, 0, "Invalid JSON should cause non-zero exit");
 }
+
+#[test]
+fn test_stop_hook_active_short_circuits() {
+    // Even in a repo that would normally block, stop_hook_active=true must skip checks.
+    let json = r#"{"hook_event_name":"Stop","cwd":".","session_id":"test","transcript_path":"/tmp/t","stop_hook_active":true}"#;
+    let (stdout, _stderr, code) = run_rufio(json);
+
+    assert_eq!(code, 0);
+    assert!(
+        stdout.is_empty(),
+        "stop_hook_active must short-circuit, got: {stdout}"
+    );
+}

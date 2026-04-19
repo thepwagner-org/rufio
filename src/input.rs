@@ -11,4 +11,8 @@ pub struct HookInput {
     /// Tool name (only present for PreToolUse/PostToolUse events)
     #[allow(dead_code)]
     pub tool_name: Option<String>,
+    /// True when Claude Code is re-invoking Stop after a previous block.
+    /// Short-circuit to avoid a ping-pong loop when a check keeps failing.
+    #[serde(default)]
+    pub stop_hook_active: bool,
 }

@@ -13,17 +13,13 @@ mod transcript;
 use config::group_files_by_config;
 use input::HookInput;
 
-/// Write to a file log when RUFIO_LOG is set (e.g. RUFIO_LOG=/tmp/rufio.log).
+/// Write to a log file when RUFIO_LOG is set, e.g. RUFIO_LOG=/tmp/rufio.log.
 fn log(msg: &str) {
     let path = match std::env::var("RUFIO_LOG") {
         Ok(p) if !p.is_empty() => p,
         _ => return,
     };
-    if let Ok(mut f) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(f, "{}", msg);
     }
 }
@@ -33,8 +29,7 @@ fn main() -> Result<()> {
         .with_writer(io::stderr)
         .with_target(false)
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("rufio=debug".parse()?),
+            tracing_subscriber::EnvFilter::from_default_env().add_directive("rufio=debug".parse()?),
         )
         .init();
 
@@ -42,12 +37,19 @@ fn main() -> Result<()> {
 
     let input = read_input()?;
 
-    log(&format!("hook_event={} cwd={} transcript={}", input.hook_event_name, input.cwd, input.transcript_path));
+    log(&format!(
+        "hook_event={} cwd={} transcript={}",
+        input.hook_event_name, input.cwd, input.transcript_path
+    ));
 
     info!(hook_event = %input.hook_event_name, cwd = %input.cwd);
 
     if input.hook_event_name == "Stop" {
-        run_stop_checks(&input)?;
+        if input.stop_hook_active {
+            log("stop_hook_active=true, skipping checks to avoid loop");
+        } else {
+            run_stop_checks(&input)?;
+        }
     } else {
         log(&format!("ignoring event: {}", input.hook_event_name));
     }
@@ -63,7 +65,10 @@ fn run_stop_checks(input: &HookInput) -> Result<()> {
     log(&format!("changed_files={:?}", changed_files));
     log(&format!("transcript_events={}", events.len()));
     for e in &events {
-        log(&format!("  event: tool={} cmd={:?} file={:?} idx={}", e.tool_name, e.command, e.file_path, e.index));
+        log(&format!(
+            "  event: tool={} cmd={:?} file={:?} idx={}",
+            e.tool_name, e.command, e.file_path, e.index
+        ));
     }
 
     debug!(?changed_files);
@@ -78,7 +83,11 @@ fn run_stop_checks(input: &HookInput) -> Result<()> {
 
     log(&format!("groups={}", groups.len()));
     for (loaded, files) in &groups {
-        log(&format!("  group config_dir={} files={:?}", loaded.config_dir.display(), files));
+        log(&format!(
+            "  group config_dir={} files={:?}",
+            loaded.config_dir.display(),
+            files
+        ));
     }
 
     debug!(groups = groups.len());
@@ -87,7 +96,10 @@ fn run_stop_checks(input: &HookInput) -> Result<()> {
         let results = checks::run_checks(loaded, files, &events, cwd_path);
 
         for result in results {
-            log(&format!("  check={} reason={:?}", result.check_name, result.reason));
+            log(&format!(
+                "  check={} reason={:?}",
+                result.check_name, result.reason
+            ));
             if let Some(reason) = result.reason {
                 reasons.push(reason);
             }
@@ -147,11 +159,7 @@ fn filter_to_project(cwd: &str, files: Vec<String>) -> Vec<String> {
 /// Strip the project prefix from git-root-relative file paths.
 /// When project_root == git_root, returns files unchanged.
 /// Otherwise filters to files under the project and strips the prefix.
-fn strip_project_prefix(
-    files: Vec<String>,
-    git_root: &Path,
-    project_root: &Path,
-) -> Vec<String> {
+fn strip_project_prefix(files: Vec<String>, git_root: &Path, project_root: &Path) -> Vec<String> {
     if project_root == git_root {
         return files;
     }
