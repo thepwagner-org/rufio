@@ -99,6 +99,7 @@ pub fn extract_tool_events(transcript_path: &str) -> Result<Vec<ToolUseEvent>> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

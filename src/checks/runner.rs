@@ -78,7 +78,15 @@ fn run_single_check(
     if let Some(commands) = &check.then.ensure_commands {
         check_ensure_commands(check, &pattern, commands, events, config_dir)
     } else if let Some(paths) = &check.then.ensure_changed {
-        check_ensure_changed(check, paths, changed_files, config_dir, repo_root)
+        check_ensure_changed(
+            check,
+            &pattern,
+            paths,
+            changed_files,
+            events,
+            config_dir,
+            repo_root,
+        )
     } else {
         CheckResult {
             check_name: check.name.clone(),
@@ -184,13 +192,35 @@ fn check_ensure_commands(
 /// Check that at least one of the specified paths was changed.
 /// Resolves required paths relative to config dir, compares against
 /// changed files resolved relative to repo root.
+///
+/// Skipped when the current session's transcript contains no
+/// Edit/Write event matching `paths_changed` — `changed_files` (from
+/// `git status`) covers the whole working tree including modifications
+/// from prior sessions or other agents, so without this gate a
+/// pre-existing dirty file fires the check on every Stop.
 fn check_ensure_changed(
     check: &Check,
+    pattern: &Pattern,
     required_paths: &[String],
     changed_files: &[String],
+    events: &[ToolUseEvent],
     config_dir: &Path,
     repo_root: &Path,
 ) -> CheckResult {
+    let edited_in_session = events.iter().any(|e| {
+        (e.tool_name == "Edit" || e.tool_name == "Write")
+            && e.file_path
+                .as_ref()
+                .is_some_and(|p| transcript_path_matches(p, pattern, config_dir))
+    });
+
+    if !edited_in_session {
+        return CheckResult {
+            check_name: check.name.clone(),
+            reason: None,
+        };
+    }
+
     let any_changed = required_paths.iter().any(|required| {
         let absolute_required = config_dir.join(required);
         changed_files.iter().any(|f| {
@@ -218,6 +248,7 @@ fn check_ensure_changed(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::config::{RufioConfig, Then, When};
@@ -345,7 +376,12 @@ mod tests {
             &config_dir,
         );
         let changed_files = vec!["src/main.rs".to_string(), "version.toml".to_string()];
-        let events = vec![];
+        let events = vec![ToolUseEvent {
+            tool_name: "Write".to_string(),
+            command: None,
+            file_path: Some("/repo/src/main.rs".to_string()),
+            index: 0,
+        }];
 
         let results = run_checks(&loaded, &changed_files, &events, &repo_root);
         assert_eq!(results.len(), 1);
@@ -366,12 +402,47 @@ mod tests {
             &config_dir,
         );
         let changed_files = vec!["src/main.rs".to_string()];
-        let events = vec![];
+        let events = vec![ToolUseEvent {
+            tool_name: "Write".to_string(),
+            command: None,
+            file_path: Some("/repo/src/main.rs".to_string()),
+            index: 0,
+        }];
 
         let results = run_checks(&loaded, &changed_files, &events, &repo_root);
         assert_eq!(results.len(), 1);
         assert!(results[0].reason.is_some());
         assert!(results[0].reason.as_ref().unwrap().contains("version.toml"));
+    }
+
+    #[test]
+    fn test_ensure_changed_skipped_when_no_session_edit() {
+        // Working tree is dirty (e.g. another agent modified src/main.rs)
+        // but this session's transcript has no Edit/Write of any .rs file.
+        // The check must skip — otherwise pre-existing diffs fire it on
+        // every Stop hook.
+        let repo_root = PathBuf::from("/repo");
+        let config_dir = repo_root.clone();
+        let loaded = make_loaded_config(
+            vec![make_check(
+                "version",
+                "**/*.rs",
+                None,
+                Some(vec!["version.toml"]),
+            )],
+            &config_dir,
+        );
+        let changed_files = vec!["src/main.rs".to_string()];
+        let events = vec![ToolUseEvent {
+            tool_name: "Bash".to_string(),
+            command: Some("git status".to_string()),
+            file_path: None,
+            index: 0,
+        }];
+
+        let results = run_checks(&loaded, &changed_files, &events, &repo_root);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].reason.is_none());
     }
 
     #[test]
@@ -506,7 +577,12 @@ mod tests {
             "packages/foo/src/main.rs".to_string(),
             "packages/foo/version.toml".to_string(),
         ];
-        let events = vec![];
+        let events = vec![ToolUseEvent {
+            tool_name: "Write".to_string(),
+            command: None,
+            file_path: Some("/repo/packages/foo/src/main.rs".to_string()),
+            index: 0,
+        }];
 
         let results = run_checks(&loaded, &changed_files, &events, &repo_root);
         assert_eq!(results.len(), 1);
